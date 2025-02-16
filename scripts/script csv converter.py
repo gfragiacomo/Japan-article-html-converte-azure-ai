@@ -1,24 +1,84 @@
-  
 import os  
 from dotenv import load_dotenv
 import base64
+import pandas as pd
 from openai import AzureOpenAI
+import tkinter as tk
+from tkinter import filedialog
 
+# Load environment variables from .env file
 load_dotenv()
 
+# Create and hide the root window for file dialogs
+root = tk.Tk()
+root.withdraw()
+
+# Initialize Azure OpenAI client with your credentials
 endpoint = os.getenv("ENDPOINT_URL", "https://azureopenaiapigiorgio.openai.azure.com/")  
 deployment = os.getenv("DEPLOYMENT_NAME", "gpt-4o")  
 subscription_key = os.getenv("AZURE_OPENAI_API_KEY")
 
-# Initialize Azure OpenAI Service client with key-based authentication    
 client = AzureOpenAI(  
     azure_endpoint=endpoint,  
     api_key=subscription_key,  
     api_version="2024-05-01-preview",
 )
-  
 
+# Open file dialog for selecting input file
+print("Please select your input file...")
+input_file = filedialog.askopenfilename(
+    title="Select file to process",
+    filetypes=[
+        ("Excel files", "*.xlsx"),
+        ("Excel 97-2003 files", "*.xls"),
+        ("CSV files", "*.csv"),
+        ("All files", "*.*")
+    ]
+)
 
+if not input_file:
+    print("No file selected. Exiting...")
+    exit()
+
+# Read the selected file with appropriate method based on file type
+print(f"Reading file: {input_file}")
+try:
+    if input_file.endswith(('.xlsx', '.xls')):
+        df = pd.read_excel(input_file)
+        print("Successfully read Excel file!")
+    else:
+        # Try multiple CSV reading methods if needed
+        try:
+            df = pd.read_csv(input_file, 
+                           encoding='utf-8',
+                           quoting=1,
+                           escapechar='\\',
+                           quotechar='"',
+                           engine='python')
+        except Exception as e:
+            print(f"First attempt failed, trying alternative method...")
+            try:
+                df = pd.read_csv(input_file, 
+                               encoding='utf-8',
+                               sep='\t',
+                               engine='python')
+            except Exception as e2:
+                print(f"Second attempt failed, trying final method...")
+                df = pd.read_csv(input_file, 
+                               encoding='utf-8',
+                               sep=',',
+                               quoting=3,
+                               escapechar='\\',
+                               engine='python')
+
+    print(f"Successfully loaded file with {len(df)} rows!")
+    
+except Exception as e:
+    print(f"Error reading file: {str(e)}")
+    print("Please ensure your file is properly formatted.")
+    exit(1)
+
+# Define the complete chat prompt array exactly as in the playground
 chat_prompt = [
     {
         "role": "system",
@@ -118,32 +178,71 @@ chat_prompt = [
                 "text": "Ok I will follow these rules. I will now add useless conclusion sentences, my contante will be not repeated and will focus on adding value. if a sentence is not useful or repeat something I will not add it."
             }
         ]
-    },
-    {
+    }
+] 
+
+# Process each row in the CSV
+for index, row in df.iterrows():
+    print(f"\nProcessing article {index + 1}: {row['Title']}")
+    
+    # Combine title and text
+    combined_text = f"{row['Title']}\n\n{row['Text']}"
+    
+    # Create a copy of the chat prompt and add the new text
+    messages = chat_prompt.copy()  # Copy the complete conversation with examples
+    messages.append({              # Add the new text to be processed
         "role": "user",
         "content": [
             {
                 "type": "text",
-                "text": "INSERT HERE "
+                "text": combined_text
             }
         ]
-    },
+    })
     
-] 
-    
-# Include speech result if speech is enabled  
-messages = chat_prompt 
+    try:
+        # Make the API call exactly as in the playground
+        completion = client.chat.completions.create(  
+            model=deployment,  
+            messages=messages,      # The complete conversation including examples
+            max_tokens=800,  
+            temperature=0.7,  
+            top_p=0.95,  
+            frequency_penalty=0,  
+            presence_penalty=0,
+            stop=None,  
+            stream=False  
+        )
+        
+        # Extract HTML content and update the DataFrame
+        html_content = completion.choices[0].message.content
+        df.at[index, 'Html Converted'] = html_content
+        print(f"Successfully processed article {index + 1}")
+        
+    except Exception as e:
+        print(f"Error processing article {index + 1}: {str(e)}")
 
-completion = client.chat.completions.create(  
-    model=deployment,  
-    messages=messages,
-    max_tokens=800,  
-    temperature=0.7,  
-    top_p=0.95,  
-    frequency_penalty=0,  
-    presence_penalty=0,
-    stop=None,  
-    stream=False  
-)  
-  
-print(completion.to_json())  
+# Save the processed file
+print("\nPlease select where to save the processed file...")
+output_file = filedialog.asksaveasfilename(
+    defaultextension=".xlsx",
+    initialfile="processed_articles.xlsx",
+    title="Save processed file as",
+    filetypes=[
+        ("Excel files", "*.xlsx"),
+        ("CSV files", "*.csv"),
+        ("All files", "*.*")
+    ]
+)
+
+if output_file:
+    try:
+        if output_file.endswith('.xlsx'):
+            df.to_excel(output_file, index=False)
+        else:
+            df.to_csv(output_file, index=False, quoting=1, escapechar='\\')
+        print(f"\nProcessing complete! File saved as: {output_file}")
+    except Exception as e:
+        print(f"Error saving file: {str(e)}")
+else:
+    print("\nSave cancelled. No file was created.")
