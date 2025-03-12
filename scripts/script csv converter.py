@@ -205,13 +205,13 @@ for index, row in df.iterrows():
         completion = client.chat.completions.create(  
             model=deployment,  
             messages=messages,      # The complete conversation including examples
-            max_tokens=800,  
+            max_tokens=3000,  
             temperature=0.7,  
             top_p=0.95,  
             frequency_penalty=0,  
             presence_penalty=0,
             stop=None,  
-            stream=False  
+            stream=False
         )
         
         # Extract HTML content and update the DataFrame
