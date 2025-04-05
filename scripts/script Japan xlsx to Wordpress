@@ -1,0 +1,301 @@
+import os
+import json
+from dotenv import load_dotenv
+import pandas as pd
+from openai import AzureOpenAI
+import tkinter as tk
+from tkinter import filedialog
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Create and hide the root window for file dialogs
+root = tk.Tk()
+root.withdraw()
+
+# Initialize Azure OpenAI client with your credentials
+endpoint = os.getenv("ENDPOINT_URL", "https://azureopenaiapigiorgio.openai.azure.com/")
+deployment = os.getenv("DEPLOYMENT_NAME", "gpt-4o")
+subscription_key = os.getenv("AZURE_OPENAI_API_KEY")
+
+client = AzureOpenAI(
+    azure_endpoint=endpoint,
+    api_key=subscription_key,
+    api_version="2024-05-01-preview",
+)
+
+# Open file dialog for selecting input file
+print("Please select your input file...")
+input_file = filedialog.askopenfilename(
+    title="Select file to process",
+    filetypes=[
+        ("Excel files", "*.xlsx"),
+        ("Excel 97-2003 files", "*.xls"),
+        ("CSV files", "*.csv"),
+        ("All files", "*.*")
+    ]
+)
+
+if not input_file:
+    print("No file selected. Exiting...")
+    exit()
+
+# Read the selected file with appropriate method based on file type
+print(f"Reading file: {input_file}")
+try:
+    if input_file.endswith(('.xlsx', '.xls')):
+        df = pd.read_excel(input_file)
+        print("Successfully read Excel file!")
+    else:
+        # Try multiple CSV reading methods if needed
+        try:
+            df = pd.read_csv(input_file,
+                             encoding='utf-8',
+                             quoting=1,
+                             escapechar='\\',
+                             quotechar='"',
+                             engine='python')
+        except Exception as e:
+            print(f"First attempt failed, trying alternative method...")
+            try:
+                df = pd.read_csv(input_file,
+                                 encoding='utf-8',
+                                 sep='\t',
+                                 engine='python')
+            except Exception as e2:
+                print(f"Second attempt failed, trying final method...")
+                df = pd.read_csv(input_file,
+                                 encoding='utf-8',
+                                 sep=',',
+                                 quoting=3,
+                                 escapechar='\\',
+                                 engine='python')
+
+    print(f"Successfully loaded file with {len(df)} rows!")
+except Exception as e:
+    print(f"Error reading file: {str(e)}")
+    print("Please ensure your file is properly formatted.")
+    exit(1)
+
+# Define the system message
+system_message = """
+You are an editor for a WordPress website focused on Japan and tourism in Japan. Your task is to rewrite the given article into the following elements: post_title, post_content, post_excerpt, post_category, and tags_input. Follow these guidelines:
+- post_title: Create a concise, non-cliché title without words like 'discover', 'gem', 'explore'.
+- post_content: Use HTML with one <h2> tag for the main section, and <h3> or <h4> for subheadings. Bold important words in each paragraph (at least one per paragraph). Remove any links or emojis.
+- post_excerpt: Summarize the content concisely, avoiding unnecessary adjectives.
+- post_category: Use the location name, like 'Tokyo', or relevant categories like 'Food', 'Art', separated by commas if multiple.
+- tags_input: List relevant keywords separated by commas.
+Output the result in JSON format with keys for each element: post_title, post_content, post_excerpt, post_category, tags_input.
+"""
+
+# Define the examples using data from your provided table
+# Example 1: Naka-meguro
+example1_user = """Naka-meguro
+
+# A Guide to Nakameguro - Tokyo’s Center of Cool 🌸🏙️
+
+[**Location on Google Maps**](https://maps.app.goo.gl/dy5Ji59DqfkB8LRAA)
+
+## **The Sophisticated Side of the City** ✨
+
+Centered around the **Meguro River** and within walking distance of the trendy districts of Daikanyama and Ebisu, Nakameguro holds its own in the sophistication stakes. The area is home to a range of **cool cafes and restaurants**, hip interior and accessory shops, and the **Nakameguro Koukashita**—700 meters of bars and stores anchored by the uber-modern bookstore **Nakameguro Tsutaya Books**. Nakameguro is a bustling bastion of cool throughout the year, but you'll find the crowds swell in late March and early April when the densely packed riverside cherry trees bud and blossom, creating an ultra-photogenic tunnel of pink.
+
+## **Cherry Blossom** 🌸
+
+At the end of March through early April, the cherry tree-lined **Meguro River** that slices through Nakameguro draws huge crowds buzzing with cherry blossom enthusiasm. The connecting trees on both sides of the river touch branches, creating a tunnel flanked by small stalls selling snacks and refreshing beers. Finding a quiet spot can be a challenge, especially at night when the trees are lit up. One way to avoid the crowds is to take a daytime or nighttime “**Hanami (Flower Viewing) Cruise**” that pushes off from Tennozu Isle’s Yamatsu Pier and travels to the area. While the cherry blossoms might be short-lived, the trees become a fresh, verdant green, offering you some well-needed shade from the intense summer heat.
+
+## **Nakameguro’s Starbucks Reserve ® Roastery Tokyo** ☕🌿
+
+Nakameguro’s **Starbucks Reserve® Roastery Tokyo** is one of only six Starbucks roasteries in the world. The building, designed by **Kengo Kuma**, contains a roasting factory, cocktail bar, tea floor, bakery, and cafe. The outdoor terrace is the perfect spot for viewing the cherry blossoms."""
+
+example1_assistant = """{
+  "post_title": "Nakameguro: Tokyo’s Riverside Scene",
+  "post_content": "<h2>Nakameguro Highlights</h2>\\n<p>Situated along the <strong>Meguro River</strong>, Nakameguro offers a mix of <strong>cafes</strong> and <strong>restaurants</strong> with a modern edge. Near Daikanyama and Ebisu, it’s packed with <strong>shops</strong> for accessories and decor, plus the <strong>Nakameguro Koukashita</strong>—a 700-meter strip of bars and stores beneath the tracks, featuring a standout bookstore.</p>\\n\\n<h3>Cherry Blossoms by the River</h3>\\n<p>Late March to early April brings crowds to the <strong>Meguro River</strong> for its <strong>cherry blossoms</strong>. Trees form a pink tunnel, lined with <strong>stalls</strong> selling snacks and drinks. A <strong>Hanami Cruise</strong> from Tennozu Isle’s Yamatsu Pier offers a crowd-free view, day or night. Summer turns the trees into a <strong>green</strong> shade provider.</p>\\n\\n<h3>Starbucks Roastery in Nakameguro</h3>\\n<p>The <strong>Starbucks Reserve® Roastery Tokyo</strong> stands out with its <strong>roastery</strong>, cocktail bar, tea lounge, bakery, and cafe. Designed by <strong>Kengo Kuma</strong>, its terrace is ideal for <strong>blossom</strong> viewing, blending coffee culture with local flair.</p>",
+  "post_excerpt": "Nakameguro features cafes, cherry blossoms along the Meguro River, and the Starbucks Reserve® Roastery Tokyo.",
+  "post_category": "Tokyo, Japan",
+  "tags_input": "Nakameguro, Meguro River, cherry blossoms, Tokyo tourism, Starbucks Roastery, trendy cafes, Hanami Cruise, Kengo Kuma"
+}"""
+
+# Example 2: Yanaka Ginza
+example2_user = """Yanaka Ginza
+
+# **Discover the Retro Charm of Traditional Shopping Streets, Shotengai 🛍️🏙️**
+
+## **Shotengai: Tokyo's Hidden Treasure**
+
+The ancient Japanese shopping streets, known as **shotengai**, are slowly disappearing due to the rise of supermarkets and chain stores. However, examples like Yanaka Ginza show that some shotengai still manage to thrive, offering a unique retro charm.
+
+### **Yanaka Ginza: A Flourishing Shotengai**
+
+Located just steps from Nippori Station, about 15 minutes on the JR Yamanote Line from Tokyo Station, Yanaka Ginza is a vibrant example of shotengai. With its independent shops selling meat, fish, vegetables, ready-made food, tea, and traditional Japanese wagashi sweets made in small artisan batches, this street represents the best of tradition.
+
+### **Summer Festival and Local Community**
+
+During the early August summer festival, Yanaka Ginza reveals its crucial role in bringing together the local community, offering an authentic and engaging experience.
+
+### **A Balance of Tourism and Tradition**
+
+Although the street is popular among tourists, especially on weekends, visiting in the evening on a weekday reveals a predominance of local shoppers. The 175-meter-long street is famous for its atmosphere that takes you back in time, appealing to both Japanese and foreign visitors.
+
+### **Unique Shopping and Traditional Souvenirs**
+
+Yanaka Ginza is the ideal place to purchase reasonably priced traditional souvenirs, such as chopsticks, folding fans, or Japanese sweets, in an environment free of pushy sellers.
+
+### **A Dive into History: From Edo to Showa**
+
+Although sometimes presented as an Edo period (1603-1868) experience, the street mainly has an atmosphere from the mid-20th century, typical of the Showa period (1926-1989), and seems to have formed in its current shape immediately after World War II.
+
+### **Special Attractions: Cats and Panoramic View**
+
+- **Cats**: During less crowded periods, you can see cats roaming the street or admire the statues of the seven lucky cats along the way.
+- **Breathtaking View (_yūyake dandan_)**: At the beginning of the shopping street, there are stairs that offer a splendid view of the sunset. Despite an altitude of only 4.4 meters, these stairs allow you to observe the street from a different perspective, ideal for taking unforgettable photos."""
+
+example2_assistant = """{
+  "post_title": "Shotengai: Yanaka Ginza’s Retro Streets",
+  "post_content": "<h2>Shotengai and Yanaka Ginza Charm</h2>\\n<p>Traditional Japanese <strong>shopping streets</strong> called <strong>Shotengai</strong> are fading due to modern <strong>supermarkets</strong>. Yet, places like <strong>Yanaka Ginza</strong> in Tokyo thrive, showcasing a <strong>retro</strong> vibe with independent shops.</p>\\n\\n<h3>Yanaka Ginza Highlights</h3>\\n<p>Near Nippori Station, <strong>Yanaka Ginza</strong> offers a variety of <strong>shops</strong> selling meat, fish, vegetables, and <strong>wagashi</strong> sweets crafted by artisans. This <strong>street</strong> preserves Japan’s <strong>traditions</strong> in a vibrant setting.</p>\\n\\n<h3>Summer Festival Community</h3>\\n<p>In early August, Yanaka Ginza hosts a <strong>summer festival</strong> that unites the <strong>local community</strong>. It provides an <strong>authentic</strong> experience, highlighting the street’s cultural role.</p>\\n\\n<h3>Balancing Tourism and Local Life</h3>\\n<p>While <strong>tourists</strong> flock to Yanaka Ginza on weekends, weekday evenings reveal mostly <strong>local shoppers</strong>. The 175-meter <strong>street</strong> offers a nostalgic <strong>atmosphere</strong> appealing to all visitors.</p>\\n\\n<h3>Traditional Souvenirs Shopping</h3>\\n<p>Yanaka Ginza is perfect for buying <strong>traditional souvenirs</strong> like chopsticks, folding fans, and <strong>Japanese sweets</strong>. The <strong>shops</strong> maintain a relaxed, non-pushy environment.</p>\\n\\n<h3>Historical Ambiance</h3>\\n<p>The street reflects the <strong>Showa period</strong> (1926-1989), shaped post-World War II, rather than the Edo era. Its <strong>mid-20th-century</strong> feel immerses visitors in <strong>history</strong>.</p>\\n\\n<h3>Special Features</h3>\\n<p>During quieter times, <strong>cats</strong> roam the street, with statues of seven lucky cats on display. The <strong>stairs</strong> at the street’s start offer a <strong>sunset view</strong> at 4.4 meters high, ideal for photos.</p>",
+  "post_excerpt": "Yanaka Ginza offers retro Shotengai shopping with traditional souvenirs, wagashi sweets, and a Showa-period atmosphere.",
+  "post_category": "Tokyo",
+  "tags_input": "Shotengai, Yanaka Ginza, Tokyo tourism, traditional souvenirs, Japanese sweets, Showa period, summer festival, local community"
+}"""
+
+# Example 3: Omoide Yokocho
+example3_user = """Omoide Yokocho
+
+# **Omoide Yokocho Shinjuku: A Slice of History in the Heart of Tokyo** 🏙️🍢
+
+## **A Maze of Narrow and Colorful Alleys**
+
+**Omoide Yokocho** in Shinjuku, Tokyo, is a labyrinth of small alleyways filled with izakaya-style restaurants, attracting both office workers and foreign visitors.
+
+## **Contrast with Shinjuku's Modernity** 🚉
+
+Despite Shinjuku station often being described as the busiest in the world and predominantly modern, Omoide Yokocho offers a stark contrast with its narrow lanes and traditional eateries. This maze of streets near the west exit of Shinjuku station feels like a step back in time, with its open barbecue stalls and a bustling, multicultural atmosphere.
+
+## **The History of Omoide Yokocho** 🕰️
+
+Translating to "Memory Lane," the area of Omoide Yokocho started as a large black market in the period immediately following World War II. The area, once dangerous, has transformed into a vibrant district of restaurants, retaining the rebellious spirit of the black market, yet now consisting of regularly licensed restaurants.
+
+## **Omoide Yokocho Today** 🌆
+
+Today, Omoide Yokocho is a safe and lively place to visit. It's the perfect spot to sit down, order a drink, and enjoy small typical dishes. The restaurants offer English menus, and the atmosphere is ideal for people-watching, a real spectacle in the heart of Tokyo that combines the tradition of local sumo wrestlers with the modernity of international tourists.
+
+## **Cuisine and Rules of Omoide Yokocho** 🍺
+
+Although there is a variety of food, the general rule in Omoide Yokocho is quick-prepared izakaya food, especially grilled: seafood, chicken (yakitori in all its variations), meat, and grilled offal. It's important to remember that it is necessary to order food with drinks here, and despite no smoking signs in the alleys, smoking is allowed while seated in the restaurants."""
+
+example3_assistant = """{
+  "post_title": "Omoide Yokocho: Shinjuku’s Historic Alleys",
+  "post_content": "<h2>Omoide Yokocho Atmosphere</h2>\\n<p>In Shinjuku, <strong>Omoide Yokocho</strong> is a maze of narrow <strong>alleys</strong> packed with <strong>izakaya</strong> restaurants. It draws <strong>office workers</strong> and international visitors with its lively, traditional vibe.</p>\\n\\n<h3>Contrast with Modern Shinjuku</h3>\\n<p>Near Shinjuku’s busy <strong>station</strong>, Omoide Yokocho stands out with its <strong>traditional</strong> eateries. The <strong>lanes</strong> near the west exit, filled with barbecue stalls, offer a <strong>retro</strong> escape from the area’s modern surroundings.</p>\\n\\n<h3>Historical Roots</h3>\\n<p>Known as Memory Lane, <strong>Omoide Yokocho</strong> began as a <strong>black market</strong> after World War II. Once a risky area, it’s now a vibrant <strong>district</strong> of licensed <strong>restaurants</strong> that keep its rebellious spirit alive.</p>\\n\\n<h3>A Lively Spot Today</h3>\\n<p>Now a safe destination, <strong>Omoide Yokocho</strong> is ideal for enjoying <strong>drinks</strong> and small dishes. With <strong>English menus</strong>, it’s great for people-watching, blending local <strong>sumo</strong> traditions with a global crowd.</p>\\n\\n<h3>Food and Customs</h3>\\n<p>The <strong>izakaya</strong> food here focuses on quick <strong>grilled</strong> dishes like seafood, yakitori, meat, and offal. Drinks must be ordered with <strong>food</strong>, and smoking is allowed at <strong>seats</strong> despite alleyway signs.</p>",
+  "post_excerpt": "Omoide Yokocho in Shinjuku features narrow alleys with izakaya restaurants, grilled dishes, and a retro atmosphere.",
+  "post_category": "Tokyo",
+  "tags_input": "Omoide Yokocho, Shinjuku, izakaya, Tokyo tourism, grilled food, black market history, traditional eateries, people-watching"
+}"""
+
+# Define the chat prompt with system message and examples
+chat_prompt = [
+    {
+        "role": "system",
+        "content": [
+            {"type": "text", "text": system_message}
+        ]
+    },
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": example1_user}
+        ]
+    },
+    {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": example1_assistant}
+        ]
+    },
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": example2_user}
+        ]
+    },
+    {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": example2_assistant}
+        ]
+    },
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": example3_user}
+        ]
+    },
+    {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": example3_assistant}
+        ]
+    }
+]
+
+# Process each row in the DataFrame
+for index, row in df.iterrows():
+    print(f"\nProcessing article {index + 1}: {row['Title']}")
+    combined_text = f"{row['Title']}\n\n{row['Text']}"
+    messages = chat_prompt.copy()
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": combined_text}
+        ]
+    })
+    try:
+        completion = client.chat.completions.create(
+            model=deployment,
+            messages=messages,
+            max_tokens=3000,
+            temperature=0.7,
+            top_p=0.95,
+            frequency_penalty=0,
+            presence_penalty=0,
+            stop=None,
+            stream=False
+        )
+        response_text = completion.choices[0].message.content
+        try:
+            response_dict = json.loads(response_text)
+            df.at[index, 'post_title'] = response_dict.get('post_title', '')
+            df.at[index, 'post_content'] = response_dict.get('post_content', '')
+            df.at[index, 'post_excerpt'] = response_dict.get('post_excerpt', '')
+            df.at[index, 'post_category'] = response_dict.get('post_category', '')
+            df.at[index, 'tags_input'] = response_dict.get('tags_input', '')
+            print(f"Successfully processed article {index + 1}")
+        except json.JSONDecodeError:
+            print(f"Error parsing JSON for article {index + 1}")
+            # Optionally set default values or skip
+    except Exception as e:
+        print(f"Error processing article {index + 1}: {str(e)}")
+
+# Save the processed file
+print("\nPlease select where to save the processed file...")
+output_file = filedialog.asksaveasfilename(
+    defaultextension=".xlsx",
+    initialfile="processed_articles.xlsx",
+    title="Save processed file as",
+    filetypes=[
+        ("Excel files", "*.xlsx"),
+        ("CSV files", "*.csv"),
+        ("All files", "*.*")
+    ]
+)
+
+if output_file:
+    try:
+        if output_file.endswith('.xlsx'):
+            df.to_excel(output_file, index=False)
+        else:
+            df.to_csv(output_file, index=False, quoting=1, escapechar='\\')
+        print(f"\nProcessing complete! File saved as: {output_file}")
+    except Exception as e:
+        print(f"Error saving file: {str(e)}")
+else:
+    print("\nSave cancelled. No file was created.")
